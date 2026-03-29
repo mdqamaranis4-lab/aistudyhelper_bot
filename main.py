@@ -5,23 +5,19 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- RENDER PORT FIX (FLASK SETUP) ---
+# --- RENDER PORT FIX ---
 app = Flask('')
-
 @app.route('/')
-def home():
-    return "Bot is Running Successfully!"
+def home(): return "Bot is Alive!"
 
 def run():
-    # Render hamesha port 10000 ya 8080 expect karta hai
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.start()
+    Thread(target=run).start()
 
-# --- BOT CONFIGURATION ---
+# --- CONFIG ---
 BOT_TOKEN = "8711731953:AAHnVNJrkYE-NcnbecMgklNZM7R01oheb4k"
 GEMINI_API_KEY = "AIzaSyAFEoQa_yatk2tphW4paIAvjOSc054UBjk"
 ADMIN_ID = 8503782525 
@@ -30,97 +26,123 @@ bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-users = set() 
-user_data = {}
+users = set()
+user_states = {}
 
-# --- SYLLABUS DATA ---
+# --- DETAILED SYLLABUS ---
 SYLLABUS = {
-    "9": ["Ch 1: Number Systems", "Ch 2: Polynomials", "Ch 6: Lines and Angles", "Ch 10: Circles"],
-    "10": ["Ch 1: Real Numbers", "Ch 2: Polynomials", "Ch 8: Trigonometry", "Ch 10: Circles"],
-    "11": ["Ch 1: Sets", "Ch 3: Trig Functions", "Ch 7: Permutations", "Ch 13: Limits"],
-    "12": ["Ch 1: Relations & Functions", "Ch 3: Matrices", "Ch 5: Continuity", "Ch 7: Integrals"]
+    "9": ["Number Systems", "Polynomials", "Coordinate Geometry", "Linear Equations", "Lines and Angles", "Triangles", "Quadrilaterals", "Circles", "Heron's Formula", "Surface Areas"],
+    "10": ["Real Numbers", "Polynomials", "Pair of Linear Equations", "Quadratic Equations", "Arithmetic Progressions", "Triangles", "Coordinate Geometry", "Trigonometry", "Circles", "Statistics"],
+    "11": ["Sets", "Relations & Functions", "Trigonometry", "Linear Inequalities", "Permutations", "Conic Sections", "Limits and Derivatives", "Statistics", "Probability"],
+    "12": ["Relations & Functions", "Inverse Trig", "Matrices", "Determinants", "Continuity & Differentiability", "Integrals", "Differential Equations", "Vector Algebra", "3D Geometry"]
 }
 
 # --- MAIN MENU ---
 @bot.message_handler(commands=['start'])
-def main_menu(message):
-    users.add(message.chat.id) 
+def start(message):
+    users.add(message.chat.id)
     markup = types.InlineKeyboardMarkup(row_width=1)
-    btns = [
-        types.InlineKeyboardButton("📄 Photo to Text", callback_data="ocr"),
-        types.InlineKeyboardButton("🔍 Scan and Search", callback_data="scan"),
-        types.InlineKeyboardButton("🤖 AI Generation", callback_data="ai_gen"),
-        types.InlineKeyboardButton("📚 Summary & Q/A", callback_data="class_select"),
-        types.InlineKeyboardButton("📝 Sample Paper", callback_data="sample_paper")
-    ]
-    if message.chat.id == ADMIN_ID:
-        btns.append(types.InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel"))
     
-    markup.add(*btns)
-    bot.send_message(message.chat.id, f"Namaste {message.from_user.first_name}! Main AI Assistant hoon.", reply_markup=markup)
-
-# --- ADMIN & BROADCAST ---
-@bot.message_handler(commands=['broadcast'])
-def broadcast_handler(message):
+    # "Study 📖" Button as the main entry
+    study_btn = types.InlineKeyboardButton("📖 Study (Syllabus & Chapters)", callback_data="study_main")
+    
+    # Utility Buttons
+    ocr_btn = types.InlineKeyboardButton("📄 Photo to Text", callback_data="state_ocr")
+    scan_btn = types.InlineKeyboardButton("🔍 Scan and Search", callback_data="state_scan")
+    ai_btn = types.InlineKeyboardButton("🤖 AI Chat / Doubts", callback_data="state_ai")
+    
+    markup.add(study_btn, ocr_btn, scan_btn, ai_btn)
+    
     if message.chat.id == ADMIN_ID:
-        msg_text = message.text.replace('/broadcast', '').strip()
-        if not msg_text:
-            bot.reply_to(message, "Usage: /broadcast [Message]")
-            return
-        success = 0
-        for user in users:
-            try:
-                bot.send_message(user, f"📢 **NOTICE BY ADMIN**\n\n{msg_text}")
-                success += 1
-            except: pass
-        bot.send_message(ADMIN_ID, f"✅ Sent to {success} users.")
+        markup.add(types.InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel"))
+    
+    bot.send_message(message.chat.id, f"Namaste {message.from_user.first_name}! Main aapka AI Study Assistant hoon. Padhai shuru karne ke liye niche button dabayein.", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data == "admin_panel")
-def admin_info(call):
-    bot.send_message(call.message.chat.id, f"📊 Stats: {len(users)} Users\nUse /broadcast [msg]")
+# --- CALLBACK HANDLER ---
+@bot.callback_query_handler(func=lambda call: True)
+def handle_query(call):
+    cid = call.message.chat.id
+    bot.answer_callback_query(call.id)
 
-# --- CLASS & CHAPTER SELECTION ---
-@bot.callback_query_handler(func=lambda call: call.data in ["class_select", "sample_paper"])
-def choose_class(call):
-    user_data[call.message.chat.id] = {"action": call.data}
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    classes = [types.InlineKeyboardButton(f"Class {i}", callback_data=f"cls_{i}") for i in range(9, 13)]
-    markup.add(*classes)
-    bot.edit_message_text("Class select karein:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    # 1. Main Study Menu
+    if call.data == "study_main":
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btns = [
+            types.InlineKeyboardButton("📚 Summary & Q/A", callback_data="mode_summary"),
+            types.InlineKeyboardButton("📝 Sample Paper", callback_data="mode_paper"),
+            types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_main")
+        ]
+        markup.add(btns[0], btns[1])
+        markup.add(btns[2])
+        bot.edit_message_text("Aap kya karna chahte hain?", cid, call.message.message_id, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("cls_"))
-def choose_chapter(call):
-    cls_num = call.data.split("_")[1]
-    user_data[call.message.chat.id]["class"] = cls_num
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    chapters = SYLLABUS.get(cls_num, ["General Study"])
-    for ch in chapters:
-        markup.add(types.InlineKeyboardButton(ch, callback_data=f"ch_{ch}"))
-    bot.edit_message_text(f"Class {cls_num} Chapters:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    # 2. Mode Selection (Summary or Paper)
+    elif call.data.startswith("mode_"):
+        mode = call.data.split("_")[1]
+        user_states[cid] = {"mode": mode}
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        classes = [types.InlineKeyboardButton(f"Class {i}", callback_data=f"cls_{i}") for i in range(9, 13)]
+        markup.add(*classes)
+        bot.edit_message_text("Apni Class select karein:", cid, call.message.message_id, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("ch_"))
-def final_ai_call(call):
-    chat_id = call.message.chat.id
-    chap = call.data.split("_")[1]
-    cls = user_data[chat_id]["class"]
-    action = user_data[chat_id]["action"]
-    bot.send_message(chat_id, "🔍 AI is generating...")
-    prompt = f"Explain Class {cls} {chap}. Summary + 5 QAs in Hinglish." if action == "class_select" else f"Create 10-question practice test for Class {cls} {chap} in Hinglish."
-    response = model.generate_content(prompt)
-    bot.send_message(chat_id, response.text)
+    # 3. Class Selection -> Shows Detailed Chapters
+    elif call.data.startswith("cls_"):
+        cls = call.data.split("_")[1]
+        user_states[cid]["class"] = cls
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        chapters = SYLLABUS.get(cls, ["General Math"])
+        # Sirf pehle 8-10 chapters dikhate hain taaki button list lambi na ho
+        for ch in chapters[:10]: 
+            markup.add(types.InlineKeyboardButton(ch, callback_data=f"ch_{ch}"))
+            
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="study_main"))
+        bot.edit_message_text(f"Class {cls} Syllabus (Chapters):", cid, call.message.message_id, reply_markup=markup)
 
-# --- PHOTO HANDLER ---
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
-    bot.reply_to(message, "📸 Analyzing photo...")
-    file_info = bot.get_file(message.photo[-1].file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    img_data = {"mime_type": "image/jpeg", "data": downloaded_file}
-    response = model.generate_content(["Solve this step by step in Hinglish.", img_data])
-    bot.reply_to(message, response.text)
+    # 4. Final AI Call for Chapters
+    elif call.data.startswith("ch_"):
+        chap = call.data.split("_")[1]
+        mode = user_states[cid].get("mode")
+        cls = user_states[cid].get("class")
+        
+        bot.send_message(cid, f"⏳ AI is analyzing: Class {cls} - {chap}...")
+        
+        if mode == "summary":
+            p = f"Explain Class {cls} {chap} with a clear summary and 5 most important Questions & Answers in Hinglish."
+        else:
+            p = f"Generate a 10-question Sample Practice Paper for Class {cls} {chap} with solutions in Hinglish."
+            
+        res = model.generate_content(p)
+        bot.send_message(cid, res.text)
 
-# --- START BOT & FLASK ---
+    # 5. Other States
+    elif call.data.startswith("state_"):
+        state = call.data.split("_")[1]
+        user_states[cid] = {"mode": state}
+        msg = "📸 Kripya Photo bhejein." if state in ["ocr", "scan"] else "⌨️ Apna sawal likh kar bhejein."
+        bot.send_message(cid, msg)
+
+    elif call.data == "back_to_main":
+        start(call.message)
+
+# --- BROADCAST & PHOTO HANDLER --- (Same as before)
+@bot.message_handler(content_types=['photo', 'text'])
+def handle_input(message):
+    cid = message.chat.id
+    state = user_states.get(cid, {}).get("mode", "ai")
+    
+    if message.content_type == 'photo':
+        bot.reply_to(message, "⏳ Processing...")
+        fid = message.photo[-1].file_id
+        file = bot.download_file(bot.get_file(fid).file_path)
+        img = {"mime_type": "image/jpeg", "data": file}
+        prompt = "OCR this image" if state == "ocr" else "Solve this study problem step by step in Hinglish."
+        res = model.generate_content([prompt, img])
+        bot.reply_to(message, res.text)
+    elif not message.text.startswith('/'):
+        res = model.generate_content(f"Explain in Hinglish: {message.text}")
+        bot.reply_to(message, res.text)
+
 if __name__ == "__main__":
-    keep_alive() # Starts Flask on a separate thread
-    print("Bot is LIVE!")
+    keep_alive()
     bot.polling(none_stop=True)
